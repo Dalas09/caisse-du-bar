@@ -38,8 +38,8 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:12p
 .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
 .dot.ok{background:var(--good)} .dot.off{background:var(--warn)}
 main{flex:1;overflow-y:auto;padding:4px 16px 16px;min-height:0}
-nav.tabs{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);background:var(--surface);padding-bottom:env(safe-area-inset-bottom,0px)}
-nav.tabs button{background:none;border:0;padding:8px 2px 10px;font-size:12px;font-weight:600;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px}
+nav.tabs{display:grid;grid-template-columns:repeat(6,1fr);border-top:1px solid var(--line);background:var(--surface);padding-bottom:env(safe-area-inset-bottom,0px)}
+nav.tabs button{background:none;border:0;padding:8px 0 10px;font-size:11px;min-width:0;font-weight:600;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px}
 nav.tabs button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 nav.tabs button[aria-current="true"]{color:var(--accent)}
 .badge-n{background:var(--accent);color:var(--accent-ink);border-radius:9px;font-size:10px;padding:0 5px;margin-left:2px}
@@ -137,6 +137,7 @@ label.f{display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:60
     <button data-tab="tables"><svg viewBox="0 0 24 24"><path d="M4 9h16M6 9v10M18 9v10M8 5h8"/></svg><span>Tables<span id="tabcount"></span></span></button>
     <button data-tab="stock"><svg viewBox="0 0 24 24"><path d="M9 3h6v4l2 3v10a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V10l2-3z"/><path d="M7 14h10"/></svg>Stock</button>
     <button data-tab="chiffres"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Chiffres</button>
+    <button data-tab="loc"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/></svg>Locations</button>
     <button data-tab="plus"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Réglages</button>
   </nav>
 </div>
@@ -147,7 +148,7 @@ label.f{display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:60
 "use strict";
 const RATE = 655.957; // 1 € = 655,957 FCFA (parité fixe)
 const LS_KEY = "caisse-bar.v1";
-const COLLS = ["products","tickets","tabs","moves","charges","settings"];
+const COLLS = ["products","tickets","tabs","moves","charges","settings","apparts","locations"];
 const CATS = ["Bières","Boosters & mix","Jus","Alcools","Vins"];
 
 // Carte du bar fournie par le gérant (prix de vente en FCFA). Utilisée par le bouton "Installer la carte".
@@ -226,7 +227,7 @@ let idleT;
 function bumpIdle(){ clearTimeout(idleT); idleT = setTimeout(lock, 10*60*1000); }
 
 /* ---------- données : cache local + base partagée ---------- */
-const S = { products:{}, tickets:{}, tabs:{}, moves:{}, charges:{}, settings:{} };
+const S = { products:{}, tickets:{}, tabs:{}, moves:{}, charges:{}, settings:{}, apparts:{}, locations:{} };
 let queue = [];            // écritures en attente (hors ligne)
 let db = null, online = false, loaded = false;
 
@@ -342,7 +343,8 @@ function subscribe(){
   const queries = {
     products: db.collection("products"), tabs: db.collection("tabs"), settings: db.collection("settings"),
     charges: db.collection("charges").where("day",">=",since), moves: db.collection("moves").where("day",">=",since),
-    tickets: db.collection("tickets").where("day",">=",since)
+    tickets: db.collection("tickets").where("day",">=",since),
+    apparts: db.collection("apparts"), locations: db.collection("locations")
   };
   Object.entries(queries).forEach(([coll,q])=>{
     q.onSnapshot(snap=>{
@@ -360,7 +362,7 @@ function subscribe(){
 
 /* ---------- état de l'interface ---------- */
 let tab = "caisse";
-try{ const h = location.hash.slice(1); if(["caisse","tables","stock","chiffres","plus"].includes(h)) tab = h; }catch(e){}
+try{ const h = location.hash.slice(1); if(["caisse","tables","stock","chiffres","loc","plus"].includes(h)) tab = h; }catch(e){}
 let cat = "Tout";
 let cart = [];              // {pid,name,price,cost,qty}
 let period = {mode:"jour", ref:new Date()};
@@ -380,13 +382,13 @@ function render(){
   const nTabs = Object.keys(S.tabs).length;
   $("#tabcount").innerHTML = nTabs ? `<span class="badge-n">${nTabs}</span>` : "";
   const v = $("#view"); const st = v.scrollTop;
-  v.innerHTML = (tab==="chiffres" && role==="staff") ? viewLocked()
-    : ({caisse:viewCaisse, tables:viewTables, stock:viewStock, chiffres:viewChiffres, plus:viewPlus})[tab]();
+  v.innerHTML = ((tab==="chiffres" || tab==="loc") && role==="staff") ? viewLocked()
+    : ({caisse:viewCaisse, tables:viewTables, stock:viewStock, chiffres:viewChiffres, loc:viewLoc, plus:viewPlus})[tab]();
   v.scrollTop = st;
 }
 
 function viewLocked(){
-  return `<div class="empty"><p><b>Réservé au patron et à la gérante.</b></p><p>Le chiffre d'affaires s'affiche après avoir entré un code.</p><button class="btn pri" data-act="role">Entrer un code</button></div>`;
+  return `<div class="empty"><p><b>Réservé au patron et à la gérante.</b></p><p>Le chiffre d'affaires et les locations s'affichent après avoir entré un code.</p><button class="btn pri" data-act="role">Entrer un code</button></div>`;
 }
 function installNote(){
   if(!canAdmin()) return `<div class="empty">La carte du bar n'est pas encore installée. Demandez à l'administrateur de l'installer.</div>`;
@@ -463,7 +465,7 @@ function periodRange(){
 function stats(from,to){
   const a = dayKey(from), b = dayKey(to);
   const tks = Object.entries(S.tickets).map(([id,t])=>({id,...t})).filter(t=>t.day>=a && t.day<=b && !t.cancelled).sort((x,y)=>x.ts-y.ts);
-  const ch = Object.values(S.charges).filter(c=>c.day>=a && c.day<=b);
+  const ch = Object.values(S.charges).filter(c=>c.day>=a && c.day<=b && c.scope!=="appart");
   let ca=0, cost=0, costKnown=true; const byProd={};
   tks.forEach(t=>{ ca+=t.total; (t.items||[]).forEach(l=>{
     if(l.cost) cost+=l.cost*l.qty; else costKnown=false;
@@ -486,6 +488,113 @@ function barChart(bars){
   if(bars[mi].v>0){ const x=padL+mi*bw+bw/2; s+=`<text x="${Math.min(Math.max(x,30),W-30).toFixed(1)}" y="11" font-size="10" text-anchor="middle" fill="var(--fg)" font-weight="700" font-family="var(--f-body)">${esc(fcfa(bars[mi].v))}</text>`; }
   return s+`</svg>`;
 }
+/* ---------- location d'appartements ---------- */
+const nightsBetween = (a, b) => Math.round((parseDay(b) - parseDay(a)) / 86400000);
+function rentPrice(ap, nights){
+  const base = (ap.dayPrice||0) * nights;
+  const pct = nights >= 30 ? (ap.monthDisc||0) : nights >= 7 ? (ap.weekDisc||0) : 0;
+  return {base, pct, auto: Math.round(base*pct/100)};
+}
+function nightsIn(l, from, to){ // nuits de la location qui tombent dans la période [from, to]
+  const a = l.start > dayKey(from) ? l.start : dayKey(from);
+  const endIncl = dayKey(addDays(parseDay(l.end), -1)); const b = endIncl < dayKey(to) ? endIncl : dayKey(to);
+  return b < a ? 0 : nightsBetween(a, b) + 1;
+}
+const apparts = () => Object.entries(S.apparts).map(([id,a])=>({id,...a})).filter(a=>!a.hidden).sort((x,y)=>x.name.localeCompare(y.name));
+const locs = () => Object.entries(S.locations).map(([id,l])=>({id,...l})).filter(l=>!l.cancelled);
+function locStats(from, to){
+  const a = dayKey(from), z = dayKey(to); let ca = 0, nights = 0;
+  locs().forEach(l => { const n = nightsIn(l, from, to); if(n){ ca += l.total * n / l.nights; nights += n; } });
+  const ch = Object.values(S.charges).filter(c=>c.day>=a && c.day<=z && c.scope==="appart");
+  const charges = ch.reduce((s,c)=>s+(+c.amount||0),0);
+  const days = nightsBetween(a, z) + 1, nb = apparts().length;
+  return {ca: Math.round(ca), nights, charges, ch, occ: nb ? Math.round(nights / (nb*days) * 100) : 0};
+}
+function viewLoc(){
+  const {from,to,label} = periodRange(); const st = locStats(from,to); const aps = apparts(); const today = dayKey(new Date());
+  let h = `<h2>Locations</h2>`;
+  if(!aps.length) return h + `<div class="empty"><p><b>Aucun logement pour l'instant.</b></p>${canAdmin()?`<p>Ajoutez vos appartements avec leur prix à la nuit et leurs réductions.</p><button class="btn pri" data-act="newappart">Ajouter un logement</button>`:`<p>Demandez à l'administrateur d'ajouter les logements.</p>`}</div>`;
+  h += `<button class="btn pri wide" data-act="newloc">Nouvelle location</button>
+  <div class="seg" style="margin-top:14px">${["jour","semaine","mois"].map(m=>`<button data-mode="${m}" aria-pressed="${period.mode===m}">${m[0].toUpperCase()+m.slice(1)}</button>`).join("")}</div>
+  <div class="period"><button class="btn sm ghost" data-shift="-1" aria-label="Période précédente">‹</button><b>${esc(label)}</b><button class="btn sm ghost" data-shift="1" aria-label="Période suivante">›</button></div>
+  <div class="kpis">
+    <div class="kpi big"><div class="l">Bénéfice net des locations</div><div class="v num">${fcfa(st.ca - st.charges)}</div><div class="s num">${eur(st.ca - st.charges)}</div></div>
+    <div class="kpi"><div class="l">Loyers</div><div class="v num">${fcfa(st.ca)}</div><div class="s num">${st.nights} nuit${st.nights>1?"s":""}</div></div>
+    <div class="kpi"><div class="l">Charges</div><div class="v num">${fcfa(st.charges)}</div><div class="s num">Occupation ${st.occ} %</div></div>
+  </div>
+  <p class="note">Les loyers sont comptés nuit par nuit : une location d'un mois compte pour chaque jour du mois.</p>`;
+  const cur = locs().filter(l=>l.end > today).sort((x,y)=>x.start.localeCompare(y.start));
+  h += `<h3>En cours et à venir</h3>` + (cur.length ? `<div class="list">${cur.map(l=>{ const ap=S.apparts[l.appart]||{name:"?"}; const now=l.start<=today;
+    return `<button class="li" data-locopen="${l.id}"><div class="main"><b>${esc(ap.name)} · ${esc(l.client||"Client")}</b><small>${fmtDay(parseDay(l.start))} → ${fmtDay(parseDay(l.end))} · ${l.nights} nuit${l.nights>1?"s":""}</small></div>
+    <div class="right"><b class="num">${fcfa(l.total)}</b><br><span class="pill ${l.paid>=l.total?"ok":"low"}">${l.paid>=l.total?"Payée":now?"En cours · à payer":"À payer"}</span></div></button>`; }).join("")}</div>` : `<div class="note">Aucune location en cours.</div>`);
+  const past = locs().filter(l=>l.end <= today && nightsIn(l,from,to)).sort((x,y)=>y.start.localeCompare(x.start));
+  if(past.length) h += `<h3>Terminées sur la période</h3><div class="list">${past.map(l=>`<button class="li" data-locopen="${l.id}"><div class="main"><b>${esc((S.apparts[l.appart]||{}).name||"?")} · ${esc(l.client||"Client")}</b><small>${fmtDay(parseDay(l.start))} → ${fmtDay(parseDay(l.end))}</small></div><div class="right num">${fcfa(l.total)}${l.paid<l.total?`<br><span class="pill low">Reste ${fcfa(l.total-l.paid)}</span>`:""}</div></button>`).join("")}</div>`;
+  h += `<h3>Charges des logements</h3><div class="note">Eau, électricité, internet, ménage, entretien… déduites du bénéfice des locations.</div>
+  <button class="btn wide" data-act="addlcharge">Ajouter une charge de logement</button>`;
+  if(st.ch.length) h += `<div class="list" style="margin-top:10px">${st.ch.sort((x,y)=>y.day.localeCompare(x.day)).map(c=>`<div class="li"><div class="main"><b>${esc(c.label)}</b><small>${fmtDay(parseDay(c.day))}${c.appart&&S.apparts[c.appart]?" · "+esc(S.apparts[c.appart].name):""}</small></div><div class="right num">${fcfa(c.amount)}</div></div>`).join("")}</div>`;
+  h += `<h3>Logements</h3><div class="list">${aps.map(a=>`<button class="li" ${canAdmin()?`data-appedit="${a.id}"`:""}><div class="main"><b>${esc(a.name)}</b><small class="num">${a.weekDisc?`−${a.weekDisc} % à la semaine`:""}${a.weekDisc&&a.monthDisc?" · ":""}${a.monthDisc?`−${a.monthDisc} % au mois`:""}</small></div><div class="right"><b class="num">${fcfa(a.dayPrice)}</b><br><small class="num">la nuit · ${eur(a.dayPrice)}</small></div></button>`).join("")}</div>`;
+  if(canAdmin()) h += `<div class="row wrap" style="margin-top:10px"><button class="btn" data-act="newappart">Ajouter un logement</button></div>`;
+  return h;
+}
+function showAppartEdit(id){
+  const a = id ? S.apparts[id] : {name:"", dayPrice:"", weekDisc:"", monthDisc:""};
+  openModal(`<h2>${id?"Modifier le logement":"Nouveau logement"}</h2><div class="form">
+  <label class="f">Nom<input id="aname" value="${esc(a.name)}" placeholder="Ex. Appartement 1, Studio"></label>
+  <label class="f">Prix de la nuit (F)<input id="aprice" type="number" inputmode="numeric" value="${a.dayPrice||""}"></label>
+  <div class="two"><label class="f">Réduction à la semaine (%)<input id="aweek" type="number" inputmode="numeric" value="${a.weekDisc||""}" placeholder="dès 7 nuits"></label>
+  <label class="f">Réduction au mois (%)<input id="amonth" type="number" inputmode="numeric" value="${a.monthDisc||""}" placeholder="dès 30 nuits"></label></div>
+  <button class="btn pri" data-act="saveappart">Enregistrer</button>${id?`<button class="btn danger" data-act="hideappart">Retirer ce logement</button>`:""}</div>`, {kind:"appart", id});
+}
+function locPreview(){
+  const ap = S.apparts[$("#lapp").value]; const st = $("#lstart").value, en = $("#lend").value; const box = $("#lprev");
+  if(!ap || !st || !en || en <= st){ box.textContent = "Choisissez le logement et les dates (le départ après l'arrivée)."; modalState.calc = null; return; }
+  const n = nightsBetween(st, en); const p = rentPrice(ap, n); const extra = canCost() ? Math.max(0, +($("#lextra").value||0)) : 0;
+  const total = Math.max(0, p.base - p.auto - extra);
+  const clash = locs().find(l => l.appart === $("#lapp").value && l.id !== modalState.id && l.start < en && l.end > st);
+  modalState.calc = {nights:n, base:p.base, pct:p.pct, auto:p.auto, extra, total};
+  box.innerHTML = `${n} nuit${n>1?"s":""} × ${fcfa(ap.dayPrice)} = ${fcfa(p.base)}${p.pct?`<br>Réduction ${n>=30?"au mois":"à la semaine"} (${p.pct} %) : −${fcfa(p.auto)}`:""}${extra?`<br>Réduction accordée : −${fcfa(extra)}`:""}<br><b style="font-size:18px">Total : ${fcfa(total)}</b> · ${eur(total)}${clash?`<br><span style="color:var(--bad)">Attention : ce logement est déjà loué à ${esc(clash.client||"un client")} sur ces dates.</span>`:""}`;
+}
+function showLocEdit(id){
+  const l = id ? S.locations[id] : {appart: apparts()[0].id, start: dayKey(new Date()), end: dayKey(addDays(new Date(),1)), client:"", phone:"", paid:0, extra:0};
+  openModal(`<h2>${id?"Modifier la location":"Nouvelle location"}</h2><div class="form">
+  <label class="f">Logement<select id="lapp">${apparts().map(a=>`<option value="${a.id}" ${a.id===l.appart?"selected":""}>${esc(a.name)} · ${fcfa(a.dayPrice)} la nuit</option>`).join("")}</select></label>
+  <div class="two"><label class="f">Arrivée<input id="lstart" type="date" value="${l.start}"></label><label class="f">Départ<input id="lend" type="date" value="${l.end}"></label></div>
+  <div class="two"><label class="f">Client<input id="lclient" value="${esc(l.client||"")}" placeholder="Nom"></label><label class="f">Téléphone<input id="lphone" type="tel" value="${esc(l.phone||"")}"></label></div>
+  ${canCost()?`<label class="f">Réduction en plus (F, facultatif)<input id="lextra" type="number" inputmode="numeric" value="${l.extra||""}"></label>`:""}
+  <p class="note num" id="lprev"></p>
+  <div class="two"><label class="f">Déjà payé (F)<input id="lpaid" type="number" inputmode="numeric" value="${l.paid||""}"></label>
+  <label class="f">Paiement<select id="lpay">${["Espèces","Mobile Money","Carte","Virement"].map(m=>`<option ${m===l.pay?"selected":""}>${m}</option>`).join("")}</select></label></div>
+  <button class="btn pri" data-act="saveloc">Enregistrer la location</button></div>`, {kind:"loc", id: id||null, calc:null});
+  locPreview();
+}
+function showLoc(id){
+  const l = S.locations[id]; const ap = S.apparts[l.appart]||{name:"?"};
+  openModal(`<h2>${esc(ap.name)}</h2><p>${esc(l.client||"Client")}${l.phone?` · <span class="num">${esc(l.phone)}</span>`:""}</p>
+  <div class="list"><div class="li"><div class="main">Du ${fmtDay(parseDay(l.start))} au ${fmtDay(parseDay(l.end))}</div><div class="right num">${l.nights} nuit${l.nights>1?"s":""}</div></div>
+  <div class="li"><div class="main">Prix de base</div><div class="right num">${fcfa(l.base)}</div></div>
+  ${l.auto?`<div class="li"><div class="main">Réduction ${l.nights>=30?"au mois":"à la semaine"} (${l.pct} %)</div><div class="right num">−${fcfa(l.auto)}</div></div>`:""}
+  ${l.extra?`<div class="li"><div class="main">Réduction accordée</div><div class="right num">−${fcfa(l.extra)}</div></div>`:""}
+  <div class="li"><div class="main"><b>Total</b></div><div class="right"><b class="num">${fcfa(l.total)}</b><br><small class="num">${eur(l.total)}</small></div></div>
+  <div class="li"><div class="main">Payé (${esc(l.pay||"")})</div><div class="right num">${fcfa(l.paid||0)}</div></div></div>
+  <div class="form" style="margin-top:12px">
+  ${l.paid<l.total?`<button class="btn pri wide" data-act="locpaid">Marquer comme payée (reste ${fcfa(l.total-(l.paid||0))})</button>`:""}
+  ${NATIVE?`<button class="btn wide" data-act="locprint">Imprimer le reçu</button>`:""}
+  <button class="btn wide" data-act="locedit">Modifier</button>
+  ${canCost()?`<button class="btn danger wide" data-act="loccancel">Annuler cette location</button>`:""}</div>`, {kind:"locview", id});
+}
+function locAsTicket(l){
+  const ap = S.apparts[l.appart]||{name:"Logement"};
+  return {no:"LOC", ts:Date.now(), table: ap.name, client: l.client, items:[{qty:l.nights, name:`nuit(s) du ${l.start.split("-").reverse().join("/")} au ${l.end.split("-").reverse().join("/")}`, price: l.base / l.nights}],
+    subtotal: l.base, discount: (l.auto||0)+(l.extra||0), total: l.total, pay: l.pay||"Espèces", received: l.paid||0, change: 0};
+}
+function showAddLCharge(){
+  openModal(`<h2>Charge de logement</h2><div class="form">
+  <label class="f">Nature<input id="lclabel" list="lcsugg" placeholder="Ex. Électricité"><datalist id="lcsugg">${["Eau","Électricité","Internet","Ménage","Entretien","Linge","Gaz","Taxe"].map(x=>`<option value="${x}">`).join("")}</datalist></label>
+  <div class="two"><label class="f">Montant (F)<input id="lcamount" type="number" inputmode="numeric"></label><label class="f">Date<input id="lcday" type="date" value="${dayKey(new Date())}"></label></div>
+  <label class="f">Logement<select id="lcapp"><option value="">Tous les logements</option>${apparts().map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join("")}</select></label>
+  <button class="btn pri" data-act="savelcharge">Enregistrer</button></div>`, {kind:"lcharge"});
+}
+
 function viewChiffres(){
   const {from,to,label} = periodRange();
   const st = stats(from,to);
@@ -534,7 +643,7 @@ function viewChiffres(){
 function viewPlus(){
   const ps = products(); const s = S.settings.main || {};
   const m = new Date(); const mk = dayKey(new Date(m.getFullYear(),m.getMonth(),1));
-  const ch = Object.entries(S.charges).map(([id,c])=>({id,...c})).filter(c=>c.day>=mk).sort((a,b)=>b.day.localeCompare(a.day));
+  const ch = Object.entries(S.charges).map(([id,c])=>({id,...c})).filter(c=>c.day>=mk && c.scope!=="appart").sort((a,b)=>b.day.localeCompare(a.day));
   let h = `<h2>Réglages</h2>`;
   if(role==="staff") h += `<div class="note">Vous êtes en mode Serveur. Les prix, les charges et le chiffre d'affaires sont réservés. <button class="btn sm" data-act="role">Entrer un code</button></div>`;
   if(canAdmin()){
@@ -814,6 +923,8 @@ document.addEventListener("click", e=>{
     const st=modalState, i=+(d.spinc ?? d.spdec), max=S.tabs[st.id].items[i].qty; const c=$("#splitclient").value;
     st.picks[i]=Math.max(0,Math.min(max, st.picks[i]+(d.spinc!==undefined?1:-1))); modalState.client=c; showSplit(st.id, st.picks); return;
   }
+  if(d.locopen){ showLoc(d.locopen); return; }
+  if(d.appedit){ if(canAdmin()) showAppartEdit(d.appedit); return; }
   if(d.tabopen){ showTab(d.tabopen); return; }
   if(d.addtotab){ write("update","tabs",d.addtotab,{items: mergeInto(S.tabs[d.addtotab].items||[], cart)}); toast(`Ajouté à ${S.tabs[d.addtotab].name}.`); cart=[]; closeModal(); render(); return; }
   if(d.stk){ showStockEdit(d.stk); return; }
@@ -893,13 +1004,34 @@ document.addEventListener("click", e=>{
       lsSet(SYNC_LS, {bar:k}); lsSet(SYNCLAST_LS, "1970-01-01T00:00:00Z"); syncQ=[]; lsSet(SYNCQ_LS, syncQ); toast("Récupération des ventes…");
       syncPull().then(()=>{ toast(syncErr ? "Connexion impossible. Vérifiez internet et le code." : "Téléphone relié. Les ventes s'affichent."); render(); }); break; }
     case "syncoff": { if(!canAdmin()) return; if(b.dataset.armed){ lsSet(SYNC_LS, null); toast("Téléphone délié."); render(); } else { b.dataset.armed="1"; b.textContent="Touchez encore pour délier"; } break; }
+    case "newappart": if(!canAdmin()) return; showAppartEdit(null); break;
+    case "saveappart": { if(!canAdmin()) return; const name=$("#aname").value.trim(), price=num("aprice"); if(!name||!price){ toast("Le nom et le prix de la nuit sont obligatoires."); return; }
+      const data={name, dayPrice:price, weekDisc:Math.min(100,num("aweek")||0), monthDisc:Math.min(100,num("amonth")||0)};
+      if(modalState.id) write("update","apparts",modalState.id,data); else write("set","apparts",uid(),data);
+      toast("Logement enregistré."); closeModal(); render(); break; }
+    case "hideappart": if(!canAdmin()) return; write("update","apparts",modalState.id,{hidden:true}); closeModal(); render(); break;
+    case "newloc": if(!canCost()) return; showLocEdit(null); break;
+    case "saveloc": { if(!canCost()) return; locPreview(); const c=modalState.calc; if(!c){ toast("Vérifiez le logement et les dates."); return; }
+      const data={appart:$("#lapp").value, start:$("#lstart").value, end:$("#lend").value, client:$("#lclient").value.trim(), phone:$("#lphone").value.trim(),
+        nights:c.nights, dayPrice:S.apparts[$("#lapp").value].dayPrice, base:c.base, pct:c.pct, auto:c.auto, extra:c.extra, total:c.total,
+        paid:Math.max(0,num("lpaid")||0), pay:$("#lpay").value, by:role, day:$("#lstart").value};
+      if(modalState.id) write("update","locations",modalState.id,data); else write("set","locations",uid(),{...data, created:Date.now()});
+      toast("Location enregistrée."); closeModal(); render(); break; }
+    case "locedit": { const id=modalState.id; showLocEdit(id); break; }
+    case "locpaid": { const l=S.locations[modalState.id]; write("update","locations",modalState.id,{paid:l.total}); toast("Location payée."); showLoc(modalState.id); render(); break; }
+    case "locprint": printTicket(locAsTicket(S.locations[modalState.id])); break;
+    case "loccancel": { if(!canCost()) return; if(b.dataset.armed){ write("update","locations",modalState.id,{cancelled:true, cancelledAt:Date.now(), cancelledBy:role}); toast("Location annulée."); closeModal(); render(); } else { b.dataset.armed="1"; b.textContent="Touchez encore pour annuler la location"; } break; }
+    case "addlcharge": if(!canCost()) return; showAddLCharge(); break;
+    case "savelcharge": { if(!canCost()) return; const label=$("#lclabel").value.trim(), amount=num("lcamount"), day=$("#lcday").value; if(!label||!amount||!day){ toast("Remplissez la nature, le montant et la date."); return; }
+      write("set","charges",uid(),{label,amount,day,scope:"appart",appart:$("#lcapp").value||null}); toast("Charge ajoutée."); closeModal(); render(); break; }
     case "pickprinter": native({type:"listPrinters"}); break;
     case "testprint": printTicket({no:"TEST", ts:Date.now(), items:[{qty:1,name:"Test d'impression éàç",price:700}], total:700, pay:"Espèces", received:1000, change:300}); break;
   }
 });
-document.addEventListener("change", e=>{ if(e.target.id==="autoprint"){ try{ localStorage.setItem("caisse-bar.autoprint", e.target.checked?"1":"0"); }catch(_){} } });
+document.addEventListener("change", e=>{ if(["lapp","lstart","lend"].includes(e.target.id)) locPreview(); if(e.target.id==="autoprint"){ try{ localStorage.setItem("caisse-bar.autoprint", e.target.checked?"1":"0"); }catch(_){} } });
 document.addEventListener("input", e=>{
   if(e.target.id==="recv") updRendu();
+  if(["lapp","lstart","lend","lextra"].includes(e.target.id)) locPreview();
   if(e.target.id==="disc") setDiscount(+e.target.value);
   if(e.target.id==="pprice"||e.target.id==="pcost"){ const p=+($("#pprice").value||0), c=+($("#pcost").value||0); $("#peur").textContent = eur(p) + (c?` · marge ${fcfa(p-c)} par unité`:""); }
 });
