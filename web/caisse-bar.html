@@ -287,7 +287,9 @@ function syncEnqueue(coll, id, deleted){
   syncQ = syncQ.filter(x => !(x.coll === coll && x.id === id));
   syncQ.push({coll, id, deleted: !!deleted}); lsSet(SYNCQ_LS, syncQ); setTimeout(syncFlush, 300);
 }
-function syncHeaders(c){ return {"apikey": SYNC_ANON, "Authorization": "Bearer " + SYNC_ANON, "x-bar-key": c.bar, "Content-Type": "application/json"}; }
+function syncHeaders(c){ // ancienne clé « anon » (JWT) : aussi en Authorization ; nouvelle clé « publishable » : apikey seulement
+  const h = {"apikey": SYNC_ANON, "x-bar-key": c.bar, "Content-Type": "application/json"};
+  if(SYNC_ANON.startsWith("eyJ")) h.Authorization = "Bearer " + SYNC_ANON; return h; }
 async function syncFlush(){
   const c = syncCfg(); if(!c || syncBusy) return;
   syncBusy = true;

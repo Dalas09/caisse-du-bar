@@ -25,8 +25,8 @@ jobs:
       - run: node build-html.js
         env:
           ADMIN_PIN_HASH: ${{ secrets.ADMIN_PIN_HASH }}
-          SYNC_URL: ${{ vars.SYNC_URL }}
-          SYNC_ANON: ${{ vars.SYNC_ANON }}
+          SYNC_URL: https://mtjieniwbkzkefzjmrkb.supabase.co
+          SYNC_ANON: sb_publishable_e3F-vC5nbgNz-6-nMuejWA_YwtjuaCp  # clé publique Supabase, pas secrète
       - run: npx expo prebuild --platform android --no-install
         env:
           CI: 1
