@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Caisse du Bar",
+    "slug": "caisse-du-bar",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.caissedubar.app",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "Le Bluetooth sert à imprimer les tickets."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#c8780a",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.caissedubar.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": false
+          }
+        }
+      ]
+    ]
+  }
+}
