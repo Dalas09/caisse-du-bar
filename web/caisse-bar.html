@@ -271,12 +271,68 @@ async function flush(){
 }
 function write(op, coll, id, data){
   const o = {op, coll, id, data: data ? JSON.parse(JSON.stringify(data)) : undefined};
-  applyLocal(o); queue.push(o); saveLocal(); flush();
+  applyLocal(o); if(db) queue.push(o); saveLocal(); flush();
+  syncEnqueue(coll, id, op === "delete");
 }
+/* ---------- synchronisation entre téléphones (Supabase), hors artifact ---------- */
+const SYNC_URL = "", SYNC_ANON = ""; // injectés à la construction (build-html.js) ; vides = synchronisation indisponible
+const SYNC_LS = "caisse-bar.sync", SYNCQ_LS = "caisse-bar.syncq", SYNCLAST_LS = "caisse-bar.synclast";
+const lsGet = (k, d) => { try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } };
+const lsSet = (k, v) => { try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+function syncCfg(){ const c = lsGet(SYNC_LS, null); return c && c.bar && SYNC_URL ? c : null; }
+let syncQ = lsGet(SYNCQ_LS, []), syncErr = false, syncBusy = false;
+function syncEnqueue(coll, id, deleted){
+  if(db || !syncCfg()) return;
+  syncQ = syncQ.filter(x => !(x.coll === coll && x.id === id));
+  syncQ.push({coll, id, deleted: !!deleted}); lsSet(SYNCQ_LS, syncQ); setTimeout(syncFlush, 300);
+}
+function syncHeaders(c){ return {"apikey": SYNC_ANON, "Authorization": "Bearer " + SYNC_ANON, "x-bar-key": c.bar, "Content-Type": "application/json"}; }
+async function syncFlush(){
+  const c = syncCfg(); if(!c || syncBusy) return;
+  syncBusy = true;
+  try{
+    while(syncQ.length){
+      const batch = syncQ.slice(0, 200);
+      const rows = batch.map(x => ({bar: c.bar, coll: x.coll, id: x.id, deleted: x.deleted || !S[x.coll][x.id], data: x.deleted ? null : (S[x.coll][x.id] || null)}));
+      const r = await fetch(`${SYNC_URL}/rest/v1/caisse_docs?on_conflict=bar,coll,id`, {method:"POST", headers:{...syncHeaders(c), "Prefer":"resolution=merge-duplicates,return=minimal"}, body: JSON.stringify(rows)});
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      syncQ = syncQ.slice(batch.length); lsSet(SYNCQ_LS, syncQ);
+    }
+    syncErr = false;
+  }catch(e){ syncErr = true; }
+  syncBusy = false; setSync();
+}
+async function syncPull(){
+  const c = syncCfg(); if(!c || document.hidden) return;
+  try{
+    let since = lsGet(SYNCLAST_LS, "1970-01-01T00:00:00Z"), changed = false, more = true;
+    // marge d'une minute : une ligne validée en retard n'est pas perdue (réappliquer est sans effet)
+    let from = new Date(new Date(since).getTime() - 60000).toISOString();
+    while(more){
+      const r = await fetch(`${SYNC_URL}/rest/v1/caisse_docs?select=coll,id,data,deleted,updated_at&bar=eq.${encodeURIComponent(c.bar)}&updated_at=gt.${encodeURIComponent(from)}&order=updated_at.asc&limit=1000`, {headers: syncHeaders(c)});
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      const rows = await r.json();
+      rows.forEach(row => {
+        if(!S[row.coll] || syncQ.some(x => x.coll === row.coll && x.id === row.id)) return;
+        if(row.deleted) delete S[row.coll][row.id]; else S[row.coll][row.id] = row.data;
+        changed = true; if(row.updated_at > since) since = row.updated_at;
+      });
+      more = rows.length === 1000; if(more) from = rows[rows.length-1].updated_at;
+    }
+    lsSet(SYNCLAST_LS, since); syncErr = false;
+    if(changed){ saveLocal(); render(); }
+  }catch(e){ syncErr = true; }
+  setSync();
+}
+function newBarKey(){ const a = new Uint8Array(15); crypto.getRandomValues(a); return Array.from(a, b => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[b % 32]).join("").replace(/(.{5})(?=.)/g, "$1-"); }
+function syncStartAll(){ COLLS.forEach(c => Object.keys(S[c]).forEach(id => syncQ.push({coll:c, id, deleted:false}))); lsSet(SYNCQ_LS, syncQ); syncFlush().then(syncPull); }
+
 function setSync(){
   const el = $("#sync");
   let cls="", txt;
-  if(!db){ cls="off"; txt="Sur ce téléphone"; }
+  const sc = syncCfg();
+  if(!db && sc){ cls = syncQ.length || syncErr ? "off" : "ok"; txt = syncErr ? "Hors ligne" + (syncQ.length?` · ${syncQ.length} en attente`:"") : syncQ.length ? `${syncQ.length} à envoyer` : "Synchronisé"; }
+  else if(!db){ cls="off"; txt="Sur ce téléphone"; }
   else if(queue.length){ cls="off"; txt=`${queue.length} en attente`; }
   else { cls="ok"; txt="Enregistré"; }
   el.innerHTML = `<span class="dot ${cls}"></span><span>${txt}</span>`;
@@ -507,6 +563,16 @@ function viewPlus(){
   <div class="note">${getPrinter()?`Imprimante choisie : <b>${esc(getPrinter().name||getPrinter().address)}</b>`:"Aucune imprimante choisie."}</div>
   <div class="row wrap"><button class="btn" data-act="pickprinter">Choisir l'imprimante</button><button class="btn" data-act="testprint">Imprimer un test</button></div>
   <label class="row" style="margin-top:10px;gap:8px"><input id="autoprint" type="checkbox" style="width:auto" ${(()=>{try{return localStorage.getItem("caisse-bar.autoprint")==="1"}catch(e){return false}})()?"checked":""}> Imprimer le ticket automatiquement à chaque encaissement</label>`;
+  if(!db && SYNC_URL && canAdmin()){
+    const c = syncCfg();
+    h += `<h3>Synchronisation entre téléphones</h3>` + (c
+      ? `<div class="note">Ce téléphone est relié au bar. Code de liaison : <b class="num" style="font-family:var(--f-mono)">${esc(c.bar)}</b><br>Entrez ce code sur votre propre téléphone pour suivre les ventes à distance.</div>
+         <button class="btn ghost" data-act="syncoff">Délier ce téléphone</button>`
+      : `<div class="note">Reliez le téléphone de caisse et votre téléphone pour voir les ventes à distance. Il faut internet de temps en temps ; sans internet, la caisse continue de marcher et envoie les ventes plus tard.</div>
+         <div class="form"><button class="btn pri" data-act="syncnew">Relier ce téléphone (téléphone de caisse)</button>
+         <label class="f">Ou entrez le code de liaison du téléphone de caisse<input id="barkey" autocomplete="off" placeholder="XXXXX-XXXXX-XXXXX"></label>
+         <button class="btn" data-act="syncjoin">Rejoindre</button></div>`);
+  }
   if(canAdmin()) h += `<h3>Sauvegarde</h3><div class="row wrap"><button class="btn" data-act="export">Exporter les ventes (tableur)</button></div>`;
   if(role!=="staff" && hasAdminPin()) h += `<button class="btn ghost wide" style="margin-top:16px" data-act="lock">Verrouiller (mode Serveur)</button>`;
   return h + `<p class="note">Taux utilisé : 1 € = 655,957 FCFA.</p>`;
@@ -822,6 +888,11 @@ document.addEventListener("click", e=>{
       write("set","charges",uid(),{label,amount,day}); toast("Charge ajoutée."); closeModal(); render(); break; }
     case "newprod": if(!canAdmin()) return; showProdEdit(null); break;
     case "export": if(!canAdmin()) return; exportCSV(); break;
+    case "syncnew": { if(!canAdmin()) return; lsSet(SYNC_LS, {bar:newBarKey()}); lsSet(SYNCLAST_LS, "1970-01-01T00:00:00Z"); syncStartAll(); toast("Téléphone relié."); render(); break; }
+    case "syncjoin": { if(!canAdmin()) return; const k=($("#barkey").value||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"").replace(/(.{5})(?=.)/g,"$1-"); if(k.length<17){ toast("Le code de liaison a 15 caractères."); return; }
+      lsSet(SYNC_LS, {bar:k}); lsSet(SYNCLAST_LS, "1970-01-01T00:00:00Z"); syncQ=[]; lsSet(SYNCQ_LS, syncQ); toast("Récupération des ventes…");
+      syncPull().then(()=>{ toast(syncErr ? "Connexion impossible. Vérifiez internet et le code." : "Téléphone relié. Les ventes s'affichent."); render(); }); break; }
+    case "syncoff": { if(!canAdmin()) return; if(b.dataset.armed){ lsSet(SYNC_LS, null); toast("Téléphone délié."); render(); } else { b.dataset.armed="1"; b.textContent="Touchez encore pour délier"; } break; }
     case "pickprinter": native({type:"listPrinters"}); break;
     case "testprint": printTicket({no:"TEST", ts:Date.now(), items:[{qty:1,name:"Test d'impression éàç",price:700}], total:700, pay:"Espèces", received:1000, change:300}); break;
   }
@@ -843,6 +914,8 @@ loadLocal(); render(); setSync();
 (async()=>{
   for(let i=0;i<30 && !window.claude;i++) await new Promise(r=>setTimeout(r,100));
   try{ db = window.claude ? await window.claude.use("db") : null; }catch(e){ db = null; }
-  if(db){ subscribe(); flush(); } else { setSync(); }
+  if(db){ subscribe(); flush(); } else { setSync(); if(syncCfg()){ syncFlush(); syncPull(); } }
+  setInterval(()=>{ if(!db && syncCfg()){ syncFlush(); syncPull(); } }, 20000);
+  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden && !db && syncCfg()) syncPull(); });
 })();
 </script>

@@ -25,6 +25,8 @@ jobs:
       - run: node build-html.js
         env:
           ADMIN_PIN_HASH: ${{ secrets.ADMIN_PIN_HASH }}
+          SYNC_URL: ${{ vars.SYNC_URL }}
+          SYNC_ANON: ${{ vars.SYNC_ANON }}
       - run: npx expo prebuild --platform android --no-install
         env:
           CI: 1
