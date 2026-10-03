@@ -102,6 +102,10 @@ button.li:first-child{border-top:0}
 .chart svg{display:block;width:100%;height:auto}
 .empty{padding:28px 16px;text-align:center;color:var(--muted)}
 .note{font-size:13px;color:var(--muted);background:var(--surface2);border-radius:12px;padding:10px 12px;margin:10px 0}
+.svc{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.svcrow{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:6px 6px 6px 12px;font-size:14px}
+.svcrow .main{flex:1;min-width:0}
+.svc>.btn{align-self:flex-start}
 .note.warn{background:var(--warn-soft);color:var(--warn)}
 label.f{display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:600;color:var(--muted)}
 .form{display:grid;gap:12px}
@@ -148,7 +152,7 @@ label.f{display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:60
 "use strict";
 const RATE = 655.957; // 1 € = 655,957 FCFA (parité fixe)
 const LS_KEY = "caisse-bar.v1";
-const COLLS = ["products","tickets","tabs","moves","charges","settings","apparts","locations"];
+const COLLS = ["products","tickets","tabs","moves","charges","settings","apparts","locations","shifts"];
 const CATS = ["Bières","Boosters & mix","Jus","Alcools","Vins"];
 
 // Carte du bar fournie par le gérant (prix de vente en FCFA). Utilisée par le bouton "Installer la carte".
@@ -227,7 +231,7 @@ let idleT;
 function bumpIdle(){ clearTimeout(idleT); idleT = setTimeout(lock, 10*60*1000); }
 
 /* ---------- données : cache local + base partagée ---------- */
-const S = { products:{}, tickets:{}, tabs:{}, moves:{}, charges:{}, settings:{}, apparts:{}, locations:{} };
+const S = { products:{}, tickets:{}, tabs:{}, moves:{}, charges:{}, settings:{}, apparts:{}, locations:{}, shifts:{} };
 let queue = [];            // écritures en attente (hors ligne)
 let db = null, online = false, loaded = false;
 
@@ -244,6 +248,9 @@ function saveLocal(){
   clearTimeout(saveT);
   saveT = setTimeout(()=>{ try{ localStorage.setItem(LS_KEY, JSON.stringify({...S, queue})); }catch(e){} }, 150);
 }
+function saveNow(){ clearTimeout(saveT); try{ localStorage.setItem(LS_KEY, JSON.stringify({...S, queue})); }catch(e){} }
+window.addEventListener("pagehide", saveNow);
+document.addEventListener("visibilitychange", ()=>{ if(document.hidden) saveNow(); });
 function applyLocal(op){
   const c = S[op.coll];
   if(op.op === "delete") delete c[op.id];
@@ -346,13 +353,14 @@ function subscribe(){
     products: db.collection("products"), tabs: db.collection("tabs"), settings: db.collection("settings"),
     charges: db.collection("charges").where("day",">=",since), moves: db.collection("moves").where("day",">=",since),
     tickets: db.collection("tickets").where("day",">=",since),
-    apparts: db.collection("apparts"), locations: db.collection("locations")
+    apparts: db.collection("apparts"), locations: db.collection("locations"),
+    shifts: db.collection("shifts").where("day",">=",since)
   };
   Object.entries(queries).forEach(([coll,q])=>{
     q.onSnapshot(snap=>{
       const m = {}; snap.docs.forEach(d=>{ m[d.id] = d.data(); });
       // garder les données plus anciennes déjà chargées (tickets hors fenêtre) et les écritures en attente
-      if(coll === "tickets" || coll === "charges" || coll === "moves"){
+      if(coll === "tickets" || coll === "charges" || coll === "moves" || coll === "shifts"){
         Object.entries(S[coll]).forEach(([id,v])=>{ if(v.day < since) m[id] = v; });
       }
       S[coll] = m;
@@ -406,7 +414,7 @@ function viewCaisse(){
   const shown = cat==="Tout" ? ps : ps.filter(p=>p.cat===cat);
   const inCart = {}; cart.forEach(l=>{ inCart[l.pid]=(inCart[l.pid]||0)+l.qty; });
   const tot = cartTotal(cart), n = cart.reduce((s,l)=>s+l.qty,0);
-  return `<div class="chips">${cats.map(c=>`<button class="chip" data-cat="${esc(c)}" aria-pressed="${c===cat}">${esc(c)}</button>`).join("")}</div>
+  return serviceBar() + `<div class="chips">${cats.map(c=>`<button class="chip" data-cat="${esc(c)}" aria-pressed="${c===cat}">${esc(c)}</button>`).join("")}</div>
   <div class="grid">${shown.map(p=>{
     const s = stockState(p);
     const price = p.priceMax ? `${fcfa(p.price).replace(" F","")}–${fcfa(p.priceMax)}` : fcfa(p.price);
@@ -422,6 +430,58 @@ function viewCaisse(){
     <button class="btn" data-act="cart" ${n?"":"disabled"}>Voir</button>
     <button class="btn pri" data-act="pay" ${n?"":"disabled"}>Encaisser</button>
   </div>`;
+}
+
+/* --- heures de travail (pointage du personnel) --- */
+const SHIFTDEV_LS = "caisse-bar.pointage"; // ce téléphone sert au pointage : proposer le début de service à l'ouverture
+const shifts = () => Object.entries(S.shifts).map(([id,x])=>({id,...x})).filter(x=>!x.deleted);
+const openShifts = () => shifts().filter(x=>!x.end).sort((a,b)=>a.start-b.start);
+const shiftMs = x => Math.max(0, (x.end || Date.now()) - x.start);
+const fmtDur = ms => { const m = Math.round(ms/60000); return `${Math.floor(m/60)} h ${pad(m%60)}`; };
+const staffNames = () => [...new Set(shifts().sort((a,b)=>b.start-a.start).map(x=>x.name))];
+function serviceBar(){
+  const op = openShifts();
+  return `<div class="svc">${op.map(x=>`<div class="svcrow"><span class="dot ok"></span><span class="main"><b>${esc(x.name)}</b> en service depuis ${fmtTime(x.start)}${new Date(x.start).toDateString()!==new Date().toDateString()?" (hier)":""}</span>
+    <button class="btn sm" data-shiftend="${x.id}">Fin de service</button></div>`).join("")}
+    <button class="btn sm ghost" data-act="shiftstart">${op.length?"+ Autre personne":"Commencer mon service"}</button></div>`;
+}
+function showShiftStart(auto){
+  const names = staffNames();
+  openModal(`<h2>${auto?"Qui commence son service ?":"Commencer un service"}</h2>
+  <p style="color:var(--muted)">L'heure de début est enregistrée maintenant. Touchez « Fin de service » en partant.</p>
+  ${names.length?`<div class="chips" style="flex-wrap:wrap">${names.map(n=>`<button class="chip" data-shiftname="${esc(n)}">${esc(n)}</button>`).join("")}</div>`:""}
+  <div class="form"><label class="f">${names.length?"Ou un autre prénom":"Prénom"}<input id="shiftname" autocomplete="off" placeholder="Ex. Marie"></label>
+  <button class="btn pri" data-act="shiftgo">Commencer le service</button>${auto?`<button class="btn ghost" data-act="close">Plus tard</button>`:""}</div>`, {kind:"shiftstart"});
+}
+function startShift(name){
+  name = (name||"").trim(); if(!name){ toast("Indiquez le prénom."); return; }
+  if(openShifts().some(x=>x.name.toLowerCase()===name.toLowerCase())){ toast(`${name} est déjà en service.`); return; }
+  const now = Date.now(); write("set","shifts",uid(),{name, start:now, end:null, day:dayKey(new Date(now))});
+  try{ localStorage.setItem(SHIFTDEV_LS, "1"); }catch(e){}
+  closeModal(); toast(`Bon service, ${name} ! Début à ${fmtTime(now)}.`); render();
+}
+function showShiftEdit(id){
+  const x = S.shifts[id]; if(!x) return; const t = ts => ts ? fmtTime(ts) : "";
+  openModal(`<h2>Corriger un service</h2><div class="form">
+  <label class="f">Prénom<input id="sename" value="${esc(x.name)}"></label>
+  <label class="f">Date de début<input id="seday" type="date" value="${dayKey(new Date(x.start))}"></label>
+  <div class="two"><label class="f">Début<input id="sestart" type="time" value="${t(x.start)}"></label><label class="f">Fin${x.end?"":" (en cours)"}<input id="seend" type="time" value="${t(x.end)}"></label></div>
+  <p class="note">Si la fin est avant le début, le service se termine le lendemain.</p>
+  <button class="btn pri" data-act="saveshift">Enregistrer</button>
+  <button class="btn danger" data-act="delshift">Supprimer ce service</button></div>`, {kind:"shiftedit", id});
+}
+function shiftSection(from, to){
+  const a = dayKey(from), z = dayKey(to);
+  const xs = shifts().filter(x=>x.day>=a && x.day<=z).sort((p,q)=>q.start-p.start);
+  let h = `<h3>Heures de travail</h3>`;
+  if(!xs.length) return h + `<div class="note">Aucun service pointé sur cette période. Le serveur touche « Commencer mon service » dans la Caisse en arrivant, et « Fin de service » en partant.</div>`;
+  const per = {}; xs.forEach(x=>{ const k=x.name; per[k]=per[k]||{ms:0,n:0}; per[k].ms+=shiftMs(x); per[k].n++; });
+  h += `<div class="list">${Object.entries(per).sort((p,q)=>q[1].ms-p[1].ms).map(([n,v])=>`<div class="li"><div class="main"><b>${esc(n)}</b><small>${v.n} service${v.n>1?"s":""}</small></div><div class="right"><b class="num">${fmtDur(v.ms)}</b></div></div>`).join("")}</div>
+  <h3>Détail des services</h3><div class="list">${xs.map(x=>{ const long = shiftMs(x) > 14*3600000;
+    return `<button class="li" data-shiftedit="${x.id}"><div class="main"><b>${esc(x.name)}</b><small>${period.mode==="jour"?"":fmtDay(new Date(x.start))+" · "}${fmtTime(x.start)} → ${x.end?fmtTime(x.end):"en cours"}</small></div>
+    <div class="right"><b class="num">${fmtDur(shiftMs(x))}</b>${long?`<br><span class="pill low">À vérifier</span>`:""}</div></button>`; }).join("")}</div>
+  <p class="note">Touchez un service pour corriger l'heure ou le supprimer (oubli de pointage).</p>`;
+  return h;
 }
 
 function viewTables(){
@@ -636,6 +696,7 @@ function viewChiffres(){
         : `<div class="li"><div class="main"><b>Réduction · N° ${esc(t.no)}</b><small>${fmtDay(new Date(t.ts))} ${fmtTime(t.ts)} · par ${esc(ROLE_NAMES[t.discountBy]||"?")}${t.discountReason?" · "+esc(t.discountReason):""}</small></div><span class="pill low num">−${fcfa(t.discount)}</span></div>`).join("")}</div>`;
     }
   }
+  h += shiftSection(from, to);
   if(n) h += `<h3>Tickets</h3><div class="list">${st.tks.slice().reverse().map(t=>`<button class="li" data-ticket="${t.id}"><div class="main"><b>N° ${esc(t.no)}${t.table?" · "+esc(t.table):""}</b><small>${period.mode==="jour"?"":fmtDay(new Date(t.ts))+" · "}${fmtTime(t.ts)} · ${esc(t.pay)}</small></div><div class="right num">${fcfa(t.total)}</div></button>`).join("")}</div>`;
   else h += `<div class="empty">Aucune vente sur cette période.</div>`;
   if(st.ch.length) h += `<h3>Charges de la période</h3><div class="list">${st.ch.map(c=>`<div class="li"><div class="main"><b>${esc(c.label)}</b><small>${fmtDay(parseDay(c.day))}</small></div><div class="right num">${fcfa(c.amount)}</div></div>`).join("")}</div>`;
@@ -925,6 +986,12 @@ document.addEventListener("click", e=>{
     const st=modalState, i=+(d.spinc ?? d.spdec), max=S.tabs[st.id].items[i].qty; const c=$("#splitclient").value;
     st.picks[i]=Math.max(0,Math.min(max, st.picks[i]+(d.spinc!==undefined?1:-1))); modalState.client=c; showSplit(st.id, st.picks); return;
   }
+  if(d.shiftname!==undefined){ startShift(d.shiftname); return; }
+  if(d.shiftend){ const x=S.shifts[d.shiftend]; if(!x) return;
+    if(b.dataset.armed){ const now=Date.now(); write("update","shifts",d.shiftend,{end:now}); toast(`Fin de service pour ${x.name} : ${fmtDur(now-x.start)}.`); render(); }
+    else { b.dataset.armed="1"; b.textContent="Confirmer la fin"; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent="Fin de service"; } }, 5000); }
+    return; }
+  if(d.shiftedit){ if(canCost()) showShiftEdit(d.shiftedit); return; }
   if(d.locopen){ showLoc(d.locopen); return; }
   if(d.appedit){ if(canAdmin()) showAppartEdit(d.appedit); return; }
   if(d.tabopen){ showTab(d.tabopen); return; }
@@ -1026,6 +1093,14 @@ document.addEventListener("click", e=>{
     case "addlcharge": if(!canCost()) return; showAddLCharge(); break;
     case "savelcharge": { if(!canCost()) return; const label=$("#lclabel").value.trim(), amount=num("lcamount"), day=$("#lcday").value; if(!label||!amount||!day){ toast("Remplissez la nature, le montant et la date."); return; }
       write("set","charges",uid(),{label,amount,day,scope:"appart",appart:$("#lcapp").value||null}); toast("Charge ajoutée."); closeModal(); render(); break; }
+    case "shiftstart": showShiftStart(false); break;
+    case "shiftgo": startShift($("#shiftname").value); break;
+    case "saveshift": { if(!canCost()) return; const name=$("#sename").value.trim(), day=$("#seday").value, a=$("#sestart").value, z=$("#seend").value;
+      if(!name||!day||!a){ toast("Le prénom, la date et le début sont obligatoires."); return; }
+      const [y,mo,dd]=day.split("-").map(Number), at=(hm,plus)=>{ const [hh,mm]=hm.split(":").map(Number); return new Date(y,mo-1,dd+(plus||0),hh,mm).getTime(); };
+      const start=at(a); let end=z?at(z):null; if(end!=null && end<=start) end=at(z,1);
+      write("update","shifts",modalState.id,{name,start,end,day,editedBy:role,editedAt:Date.now()}); toast("Service corrigé."); closeModal(); render(); break; }
+    case "delshift": { if(!canCost()) return; if(b.dataset.armed){ write("update","shifts",modalState.id,{deleted:true,editedBy:role,editedAt:Date.now()}); toast("Service supprimé."); closeModal(); render(); } else { b.dataset.armed="1"; b.textContent="Touchez encore pour supprimer"; } break; }
     case "pickprinter": native({type:"listPrinters"}); break;
     case "testprint": printTicket({no:"TEST", ts:Date.now(), items:[{qty:1,name:"Test d'impression éàç",price:700}], total:700, pay:"Espèces", received:1000, change:300}); break;
   }
@@ -1045,6 +1120,12 @@ setInterval(()=>{ if(queue.length) flush(); }, 20000);
 
 /* ---------- démarrage ---------- */
 loadLocal(); render(); setSync();
+function askShiftOnOpen(){ // téléphone de caisse : proposer le début de service si personne n'est en service
+  let dev = false; try{ dev = localStorage.getItem(SHIFTDEV_LS)==="1"; }catch(e){}
+  if(dev && !openShifts().length && role==="staff" && $("#modal").hidden) showShiftStart(true);
+}
+setTimeout(askShiftOnOpen, 1500);
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) setTimeout(askShiftOnOpen, 800); });
 (async()=>{
   for(let i=0;i<30 && !window.claude;i++) await new Promise(r=>setTimeout(r,100));
   try{ db = window.claude ? await window.claude.use("db") : null; }catch(e){ db = null; }
