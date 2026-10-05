@@ -1,4 +1,4 @@
-name: Construire l'APK Android
+name: Construire l'APK Android et le programme Windows
 
 on:
   push:
@@ -44,3 +44,29 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: Caisse du Bar 1.0.${{ github.run_number }}
           files: caisse-du-bar.apk
+
+  windows:
+    needs: apk
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node build-html.js
+        env:
+          ADMIN_PIN_HASH: ${{ secrets.ADMIN_PIN_HASH }}
+          SYNC_URL: https://mtjieniwbkzkefzjmrkb.supabase.co
+          SYNC_ANON: sb_publishable_e3F-vC5nbgNz-6-nMuejWA_YwtjuaCp  # clé publique Supabase, pas secrète
+      - name: Construire le programme Windows
+        working-directory: windows
+        run: |
+          npm ci
+          npx electron-builder --win portable nsis --x64 --publish never
+      - name: Ajouter à la version
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          files: |
+            windows/dist/caisse-du-bar-portable.exe
+            windows/dist/caisse-du-bar-installation.exe

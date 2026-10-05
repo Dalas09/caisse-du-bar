@@ -170,17 +170,21 @@ const CARTE = [
 
 /* ---------- application téléphone (impression Bluetooth) ---------- */
 const NATIVE = !!window.ReactNativeWebView;
+const WINDOWS = NATIVE && window.ReactNativeWebView.platform === "windows"; // programme Windows (Electron)
 const native = msg => { try{ window.ReactNativeWebView.postMessage(JSON.stringify(msg)); }catch(e){} };
 function getPrinter(){ try{ return JSON.parse(localStorage.getItem("caisse-bar.printer")||"null"); }catch(e){ return null; } }
 function setPrinter(p){ try{ localStorage.setItem("caisse-bar.printer", JSON.stringify(p)); }catch(e){} }
 window.__fromNative = msg => {
   if(msg.type==="printers"){
-    if(!msg.devices.length){ openModal(`<h2>Imprimante</h2><p>Aucune imprimante appairée. Allumez l'imprimante, ouvrez les réglages Bluetooth du téléphone et appairez-la (code souvent 0000 ou 1234), puis revenez ici.</p>`); return; }
+    if(!msg.devices.length){ openModal(WINDOWS ? `<h2>Imprimante</h2><p>Aucune imprimante installée dans Windows. Branchez l'imprimante, installez son pilote (Paramètres, puis Bluetooth et appareils, puis Imprimantes), puis revenez ici.</p>`
+      : `<h2>Imprimante</h2><p>Aucune imprimante appairée. Allumez l'imprimante, ouvrez les réglages Bluetooth du téléphone et appairez-la (code souvent 0000 ou 1234), puis revenez ici.</p>`); return; }
     openModal(`<h2>Choisir l'imprimante</h2><div class="list">${msg.devices.map(d=>`<button class="li" data-printer="${esc(d.address)}" data-pname="${esc(d.name)}"><div class="main"><b>${esc(d.name||"Sans nom")}</b><small>${esc(d.address)}</small></div></button>`).join("")}</div>`);
   }
   else if(msg.type==="printed"){ toast("Ticket imprimé."); }
   else if(msg.type==="error"){ toast(msg.message || "Impression impossible."); }
+  else if(msg.type==="toast"){ toast(msg.message); }
 };
+window.addEventListener("message", e => { if(e.data && e.data.__fromNative) window.__fromNative(e.data.__fromNative); });
 function printTicket(t){
   const p = getPrinter();
   if(!p){ toast("Choisissez d'abord l'imprimante."); native({type:"listPrinters"}); return; }
@@ -342,7 +346,7 @@ function setSync(){
   let cls="", txt;
   const sc = syncCfg();
   if(!db && sc){ cls = syncQ.length || syncErr ? "off" : "ok"; txt = syncErr ? "Hors ligne" + (syncQ.length?` · ${syncQ.length} en attente`:"") : syncQ.length ? `${syncQ.length} à envoyer` : "Synchronisé"; }
-  else if(!db){ cls="off"; txt="Sur ce téléphone"; }
+  else if(!db){ cls="off"; txt=WINDOWS ? "Sur cet ordinateur" : "Sur ce téléphone"; }
   else if(queue.length){ cls="off"; txt=`${queue.length} en attente`; }
   else { cls="ok"; txt="Enregistré"; }
   el.innerHTML = `<span class="dot ${cls}"></span><span>${txt}</span>`;
@@ -731,7 +735,7 @@ function viewPlus(){
     h += `<h3>Prix d'achat</h3><div class="note">Ces prix sont confidentiels : seuls l'administrateur et la gérante les voient.</div>
     <div class="list">${ps.map(p=>`<button class="li" data-costedit="${p.id}"><div class="main"><b>${esc(p.name)}</b><small class="num">Vente ${fcfa(p.price)}</small></div><div class="right num">${p.cost?"achat "+fcfa(p.cost):"achat ?"}</div></button>`).join("")}</div>`;
   }
-  if(NATIVE) h += `<h3>Imprimante Bluetooth</h3>
+  if(NATIVE) h += `<h3>${WINDOWS ? "Imprimante" : "Imprimante Bluetooth"}</h3>
   <div class="note">${getPrinter()?`Imprimante choisie : <b>${esc(getPrinter().name||getPrinter().address)}</b>`:"Aucune imprimante choisie."}</div>
   <div class="row wrap"><button class="btn" data-act="pickprinter">Choisir l'imprimante</button><button class="btn" data-act="testprint">Imprimer un test</button></div>
   <label class="row" style="margin-top:10px;gap:8px"><input id="autoprint" type="checkbox" style="width:auto" ${(()=>{try{return localStorage.getItem("caisse-bar.autoprint")==="1"}catch(e){return false}})()?"checked":""}> Imprimer le ticket automatiquement à chaque encaissement</label>`;

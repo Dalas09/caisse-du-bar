@@ -9,3 +9,6 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
   `<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body>${body}</body></html>`;
 fs.writeFileSync(__dirname + "/src/caisseHtml.js", "// Fichier généré par build-html.js — ne pas modifier à la main.\nexport default " + JSON.stringify(html) + ";\n");
 console.log("src/caisseHtml.js écrit (" + html.length + " caractères)");
+// Même page pour le programme Windows (dossier windows/, construit avec Electron).
+fs.writeFileSync(__dirname + "/windows/caisse.html", html.replace(",user-scalable=no", ""));
+console.log("windows/caisse.html écrit");

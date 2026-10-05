@@ -1,0 +1,39 @@
+{
+  "name": "caisse-du-bar-windows",
+  "productName": "Caisse du Bar",
+  "version": "1.0.0",
+  "description": "Caisse du Bar pour Windows",
+  "author": "Caisse du Bar",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable nsis --publish never"
+  },
+  "build": {
+    "appId": "com.caissedubar.windows",
+    "productName": "Caisse du Bar",
+    "files": [
+      "main.js",
+      "preload.js",
+      "caisse.html"
+    ],
+    "icon": "../assets/icon.png",
+    "directories": {
+      "output": "dist"
+    },
+    "portable": {
+      "artifactName": "caisse-du-bar-portable.exe"
+    },
+    "nsis": {
+      "artifactName": "caisse-du-bar-installation.exe",
+      "oneClick": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Caisse du Bar"
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  }
+}
